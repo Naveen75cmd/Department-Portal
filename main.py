@@ -3,17 +3,19 @@ from supabase import create_client, Client
 import pandas as pd
 from datetime import datetime
 import mimetypes
+import smtplib
+from email.mime.text import MIMEText
+from email.mime.multipart import MIMEMultipart
 
 # -----------------------------------------------------------------------------
 # Supabase Configuration
 # -----------------------------------------------------------------------------
-# REPLACE THESE WITH YOUR ACTUAL SUPABASE CREDENTIALS
-# REPLACE THESE WITH YOUR ACTUAL SUPABASE CREDENTIALS
-# url = "https://vokepxkztiqimvbplxvl.supabase.co/"
-# key = "..."
-# Using Streamlit Secrets for security (Best Practice)
-url = st.secrets["supabase"]["url"]
-key = st.secrets["supabase"]["key"]
+try:
+    url = st.secrets["supabase"]["url"]
+    key = st.secrets["supabase"]["key"]
+except Exception:
+    st.error("Missing Supabase credentials in .streamlit/secrets.toml")
+    st.stop()
 
 @st.cache_resource
 def init_supabase():
@@ -27,6 +29,42 @@ def init_supabase():
 supabase = init_supabase()
 
 # -----------------------------------------------------------------------------
+# Email Configuration
+# -----------------------------------------------------------------------------
+def send_email_notification(to_email, subject, body):
+    """Send email using SMTP."""
+    # Only try to send if email secrets are configured
+    if "email" not in st.secrets:
+        print(f"Skipping email to {to_email}: No email secrets configured.")
+        return
+
+    sender_email = st.secrets["email"]["sender_email"]
+    password = st.secrets["email"]["password"]
+    smtp_server = st.secrets["email"]["smtp_server"]
+    smtp_port = st.secrets["email"]["smtp_port"]
+
+    try:
+        msg = MIMEMultipart()
+        msg['From'] = sender_email
+        msg['To'] = to_email
+        msg['Subject'] = subject
+        msg.attach(MIMEText(body, 'plain'))
+
+        server = smtplib.SMTP(smtp_server, smtp_port)
+        server.starttls()
+        server.login(sender_email, password)
+        # In a real app, 'to_email' would be the actual student/staff email from DB.
+        # For this demo, we might be sending to dummy emails unless users have real ones.
+        # We'll just print success to avoid crashing if emails are fake.
+        if "@" in to_email: 
+             server.send_message(msg)
+        server.quit()
+    except Exception as e:
+        print(f"Failed to send email: {e}") 
+        # We don't want to crash the UI if email fails
+        pass
+
+# -----------------------------------------------------------------------------
 # Session State Management
 # -----------------------------------------------------------------------------
 if 'logged_in' not in st.session_state:
@@ -37,12 +75,28 @@ if 'username' not in st.session_state:
     st.session_state['username'] = None
 if 'name' not in st.session_state:
     st.session_state['name'] = None
+if 'section' not in st.session_state:
+    st.session_state['section'] = None
+
+# Custom CSS
+def load_custom_css():
+    st.markdown("""
+        <style>
+        div.stButton > button { font-weight: bold; border-radius: 8px; }
+        .stBadge { font-size: 0.8em; padding: 4px 8px; border-radius: 4px; }
+        /* Badge Colors */
+        .status-pending-staff { background-color: #ffeeba; color: #856404; }
+        .status-pending-hod { background-color: #bee5eb; color: #0c5460; }
+        .status-pending-principal { background-color: #e2e3e5; color: #383d41; }
+        .status-approved { background-color: #d4edda; color: #155724; }
+        .status-rejected { background-color: #f8d7da; color: #721c24; }
+        </style>
+    """, unsafe_allow_html=True)
 
 # -----------------------------------------------------------------------------
-# Authentication Functions
+# Authentication
 # -----------------------------------------------------------------------------
 def login_user(username, password):
-    """Verify credentials against Supabase users table."""
     try:
         response = supabase.table('users').select('*').eq('username', username).eq('password', password).execute()
         if len(response.data) > 0:
@@ -51,6 +105,7 @@ def login_user(username, password):
             st.session_state['user_role'] = user['role']
             st.session_state['username'] = user['username']
             st.session_state['name'] = user['name']
+            st.session_state['section'] = user.get('section')
             st.success(f"Welcome, {user['name']}!")
             st.rerun()
         else:
@@ -59,94 +114,111 @@ def login_user(username, password):
         st.error(f"Login failed: {e}")
 
 def logout_user():
-    """Clear session state and logout."""
-    st.session_state['logged_in'] = False
-    st.session_state['user_role'] = None
-    st.session_state['username'] = None
-    st.session_state['name'] = None
+    st.session_state.clear()
     st.rerun()
 
 # -----------------------------------------------------------------------------
-# Database Helper Functions
+# Database Actions
 # -----------------------------------------------------------------------------
-def fetch_circulars(limit=5):
-    """Fetch latest circulars."""
-    try:
-        response = supabase.table('circulars').select('*').order('date_posted', desc=True).limit(limit).execute()
-        return response.data
-    except Exception as e:
-        st.error(f"Error fetching circulars: {e}")
-        return []
-
-def publish_new_circular(title, content):
-    """Insert a new circular."""
-    try:
-        supabase.table('circulars').insert({'title': title, 'content': content}).execute()
-        st.success("Circular published successfully!")
-    except Exception as e:
-        st.error(f"Error publishing circular: {e}")
-
 def upload_file_to_storage(file, username):
-    """Upload file to Supabase storage and return public URL."""
+    """Upload file to Supabase storage."""
     try:
-        # Create a unique filename
         timestamp = datetime.now().strftime("%Y%m%d%H%M%S")
         file_ext = mimetypes.guess_extension(file.type) or ".pdf"
         file_name = f"{username}_{timestamp}{file_ext}"
-        
-        # Upload
         file_bytes = file.getvalue()
         supabase.storage.from_('documents').upload(file_name, file_bytes, {"content-type": file.type})
-        
-        # Get Public URL
-        public_url_response = supabase.storage.from_('documents').get_public_url(file_name)
-        return public_url_response
+        return supabase.storage.from_('documents').get_public_url(file_name)
     except Exception as e:
         st.error(f"File upload failed: {e}")
         return None
 
-def submit_leave_request(username, name, leave_type, reason, file_url):
-    """Submit a new leave request."""
+# -----------------------------------------------------------------------------
+# Helper Functions
+# -----------------------------------------------------------------------------
+def get_staff_emails(section):
+    """Fetch emails of all staff members for a specific section."""
+    try:
+        response = supabase.table('users').select('email').eq('role', 'staff').eq('section', section).execute()
+        return [row['email'] for row in response.data if row.get('email')]
+    except Exception as e:
+        print(f"Error fetching staff emails: {e}")
+        return []
+
+def get_user_email(username):
+    """Fetch email of a specific user."""
+    try:
+        response = supabase.table('users').select('email').eq('username', username).execute()
+        if response.data and response.data[0].get('email'):
+            return response.data[0]['email']
+        return None
+    except Exception:
+        return None
+
+def submit_leave_request(username, name, section, leave_type, reason, file_url):
     try:
         data = {
-            'student_name': name, # Storing name for easier display, or could store username
+            'student_username': username,
+            'student_name': name,
+            'student_section': section,
             'leave_type': leave_type,
             'reason': reason,
             'file_url': file_url,
             'status': 'Pending Staff'
         }
         supabase.table('leave_requests').insert(data).execute()
+        st.success("Prioritizing Staff Notification...")
+        
+        # Email Logic: Find Staff for this section
+        staff_emails = get_staff_emails(section)
+        for email in staff_emails:
+            send_email_notification(
+                email, 
+                f"New Leave Request - {name}", 
+                f"Student {name} (Section {section}) has requested leave."
+            )
+            
         st.success("Leave request submitted successfully!")
     except Exception as e:
         st.error(f"Error submitting request: {e}")
 
-def fetch_student_requests(student_name):
-    """Fetch requests for a specific student."""
-    try:
-        response = supabase.table('leave_requests').select('*').eq('student_name', student_name).order('date_requested', desc=True).execute()
-        return response.data
-    except Exception as e:
-        st.error(f"Error fetching requests: {e}")
-        return []
-
-def fetch_pending_requests(status_filter):
-    """Fetch requests based on status."""
-    try:
-        response = supabase.table('leave_requests').select('*').eq('status', status_filter).order('date_requested', desc=True).execute()
-        return response.data
-    except Exception as e:
-        st.error(f"Error fetching pending requests: {e}")
-        return []
-
-def update_request_status(request_id, new_status, staff_comment=""):
-    """Update the status of a request."""
+def update_request_status(req_id, new_status, comment="", role_action=""):
     try:
         update_data = {'status': new_status}
-        if staff_comment:
-            update_data['staff_comment'] = staff_comment
+        if role_action == "staff":
+            update_data['staff_comment'] = comment
+        elif role_action == "hod":
+            update_data['hod_comment'] = comment
+        elif role_action == "principal":
+            update_data['principal_comment'] = comment
             
-        supabase.table('leave_requests').update(update_data).eq('id', request_id).execute()
-        st.success(f"Request updated to: {new_status}")
+        # Get the request details to find the student
+        req_res = supabase.table('leave_requests').select('student_username').eq('id', req_id).execute()
+        student_username = req_res.data[0]['student_username'] if req_res.data else None
+            
+        supabase.table('leave_requests').update(update_data).eq('id', req_id).execute()
+        
+        # Trigger Email
+        if student_username:
+            student_email = get_user_email(student_username)
+            if student_email:
+                subject = f"Leave Update: {new_status}"
+                body = f"Your leave request status has been updated to: {new_status}.\nComment: {comment}"
+                send_email_notification(student_email, subject, body)
+        
+        # New: Notify Principal if forwarded by HOD
+        if new_status == "Pending Principal":
+            # Assuming username 'principal' or fetching any user with role 'principal'
+            # Here we try to fetch via the known username 'principal' seeded in db
+            principal_email = get_user_email('principal')
+            if principal_email:
+                send_email_notification(
+                    principal_email,
+                    "Action Required: Leave Request Forwarded",
+                    f"A leave request for {student_username} has been forwarded to you by HOD.\nComment: {comment}"
+                )
+        
+        st.success(f"Status updated to {new_status}")
         st.rerun()
     except Exception as e:
         st.error(f"Error updating status: {e}")
@@ -154,218 +226,136 @@ def update_request_status(request_id, new_status, staff_comment=""):
 # -----------------------------------------------------------------------------
 # Dashboards
 # -----------------------------------------------------------------------------
-# -----------------------------------------------------------------------------
-# Main App Structure
-# -----------------------------------------------------------------------------
-def load_custom_css():
-    st.markdown("""
-        <style>
-        /* General Button Styling */
-        div.stButton > button {
-            font-weight: bold;
-            border-radius: 8px;
-        }
-        
-        /* Secondary Button (Default) - Used for Approve/Forward -> Green Hover */
-        button[kind="secondary"]:hover, 
-        button[data-testid="baseButton-secondary"]:hover {
-            border-color: #28a745 !important;
-            color: #28a745 !important;
-            background-color: rgba(40, 167, 69, 0.1) !important;
-        }
-
-        /* Primary Button - Used for Reject -> Red Hover */
-        button[kind="primary"]:hover, 
-        button[data-testid="baseButton-primary"]:hover {
-            border-color: #dc3545 !important;
-            background-color: #dc3545 !important;
-            color: white !important;
-        }
-        
-        /* Dashboard Headers */
-        h1, h2, h3 {
-            color: #333;
-        }
-        </style>
-    """, unsafe_allow_html=True)
-
 def student_dashboard():
     st.sidebar.title("🎓 Student Portal")
-    st.sidebar.write(f"👋 Logged in as: **{st.session_state['name']}**")
-    if st.sidebar.button("🚪 Logout"):
-        logout_user()
+    st.sidebar.info(f"👤 {st.session_state['name']} (Section {st.session_state['section']})")
+    if st.sidebar.button("Logout"): logout_user()
 
-    tab1, tab2, tab3 = st.tabs(["📢 Latest Circulars", "📝 Apply for Leave/OD", "📜 Request History"])
-
+    tab1, tab2 = st.tabs(["📝 Apply Leave", "📜 History"])
+    
     with tab1:
-        st.header("📢 Latest Circulars")
-        circulars = fetch_circulars()
-        if circulars:
-            for c in circulars:
-                st.subheader(f"📌 {c['title']}")
-                st.write(c['content'])
-                st.caption(f"📅 Posted on: {c['date_posted']}")
-                st.divider()
-        else:
-            st.info("ℹ️ No circulars found.")
+        st.header("New Leave Request")
+        with st.form("leave_form"):
+            l_type = st.selectbox("Type", ["Medical", "OD", "Casual"])
+            reason = st.text_area("Reason")
+            doc = st.file_uploader("Document", type=['pdf','jpg','png'])
+            if st.form_submit_button("Submit"):
+                url = upload_file_to_storage(doc, st.session_state['username']) if doc else None
+                submit_leave_request(st.session_state['username'], st.session_state['name'], 
+                                   st.session_state['section'], l_type, reason, url)
 
     with tab2:
-        st.header("📝 Apply for Leave / On-Duty")
-        with st.form("leave_form"):
-            l_type = st.selectbox("📌 Type", ["Medical Leave", "OD", "Casual Leave"])
-            reason = st.text_area("✍️ Reason")
-            uploaded_file = st.file_uploader("📎 Upload Supporting Document", type=['pdf', 'jpg', 'png'])
-            
-            submitted = st.form_submit_button("✅ Submit Request")
-            if submitted:
-                if not reason:
-                    st.warning("⚠️ Please provide a reason.")
-                else:
-                    file_url = None
-                    if uploaded_file:
-                        with st.spinner("⏳ Uploading document..."):
-                            file_url = upload_file_to_storage(uploaded_file, st.session_state['username'])
-                    
-                    if uploaded_file and not file_url:
-                         st.error("❌ Failed to upload document. Please try again.")
-                    else:
-                        submit_leave_request(st.session_state['name'], st.session_state['name'], l_type, reason, file_url)
-
-    with tab3:
-        st.header("📜 My Request History")
-        requests = fetch_student_requests(st.session_state['name'])
-        if requests:
-            df = pd.DataFrame(requests)
-            # Display specific columns
-            st.dataframe(df[['date_requested', 'leave_type', 'status', 'staff_comment']])
+        st.header("My Requests")
+        res = supabase.table('leave_requests').select('*').eq('student_username', st.session_state['username']).order('date_requested', desc=True).execute()
+        if res.data:
+            st.dataframe(pd.DataFrame(res.data)[['date_requested','leave_type','status','staff_comment','hod_comment','principal_comment']])
         else:
-            st.info("ℹ️ No request history found.")
+            st.info("No requests found")
 
 def staff_dashboard():
     st.sidebar.title("👨‍🏫 Staff Portal")
-    st.sidebar.write(f"👋 Logged in as: **{st.session_state['name']}**")
-    if st.sidebar.button("🚪 Logout"):
-        logout_user()
+    st.sidebar.info(f"👤 {st.session_state['name']}")
+    
+    # Identify Section based on Username (Hardcoded logic for demo)
+    # staff_a -> A, staff_b -> B
+    username = st.session_state['username']
+    my_section = 'A' if 'a' in username else 'B'
+    if st.session_state.get('section'): my_section = st.session_state['section']
+    
+    st.sidebar.write(f"Managing: **Section {my_section}**")
+    if st.sidebar.button("Logout"): logout_user()
 
-    tab1, tab2 = st.tabs(["👤 Profile", "⚡ Leave Processing"])
-
-    with tab1:
-        st.header("👤 My Profile")
-        st.write(f"**Name:** {st.session_state['name']}")
-        st.write(f"**Role:** {st.session_state['user_role']}")
-        st.write(f"**Username:** {st.session_state['username']}")
-
-    with tab2:
-        st.header("⚡ Pending Leave Requests")
-        requests = fetch_pending_requests('Pending Staff')
+    st.header(f"Section {my_section} - Pending Requests")
+    
+    res = supabase.table('leave_requests').select('*')\
+        .eq('status', 'Pending Staff')\
+        .eq('student_section', my_section)\
+        .execute()
         
-        if requests:
-            for req in requests:
-                with st.expander(f"📄 {req['student_name']} - {req['leave_type']} ({req['date_requested']})"):
-                    st.write(f"**✍️ Reason:** {req['reason']}")
-                    if req['file_url']:
-                        st.markdown(f"[📎 View Document]({req['file_url']})")
-                    else:
-                        st.write("🚫 No document attached.")
-                    
-                    # Comment Section
-                    staff_comment = st.text_area("💬 Add Comment (Optional)", key=f"comment_{req['id']}")
-
-                    col1, col2 = st.columns(2)
-                    with col1:
-                        # Use default (secondary) button for positive action -> Green hover via CSS
-                        if st.button("✅ Forward to HOD", key=f"fwd_{req['id']}"):
-                            update_request_status(req['id'], "Pending HOD", staff_comment)
-                    with col2:
-                        # Use type="primary" for negative action -> Red hover via CSS
-                        if st.button("❌ Reject", key=f"rej_{req['id']}", type="primary"):
-                            update_request_status(req['id'], "Rejected by Staff", staff_comment)
-        else:
-            st.info("✅ No pending requests.")
+    for req in res.data:
+        with st.expander(f"{req['student_name']} ({req['leave_type']})"):
+            st.write(f"Reason: {req['reason']}")
+            if req['file_url']: st.markdown(f"[View Doc]({req['file_url']})")
+            
+            comment = st.text_input("Comment", key=f"c_{req['id']}")
+            c1, c2 = st.columns(2)
+            if c1.button("✅ Forward to HOD", key=f"f_{req['id']}"):
+                update_request_status(req['id'], "Pending HOD", comment, "staff")
+            if c2.button("❌ Reject", key=f"r_{req['id']}", type="primary"):
+                update_request_status(req['id'], "Rejected by Staff", comment, "staff")
 
 def hod_dashboard():
     st.sidebar.title("🎓 HOD Portal")
-    st.sidebar.write(f"👋 Logged in as: **{st.session_state['name']}**")
-    if st.sidebar.button("🚪 Logout"):
-        logout_user()
+    st.sidebar.info(f"👤 {st.session_state['name']}")
+    if st.sidebar.button("Logout"): logout_user()
 
-    tab1, tab2, tab3 = st.tabs(["👤 Profile", "📢 Publish Circular", "✅ Approvals"])
+    col_a, col_b = st.columns(2)
+    with col_a: st.metric("Pending HOD", "View Below")
+    
+    st.header("Approvals")
+    # HOD sees requests pending HOD from ALL sections
+    res = supabase.table('leave_requests').select('*').eq('status', 'Pending HOD').execute()
+    
+    for req in res.data:
+        with st.expander(f"{req['student_name']} (Sec {req['student_section']})"):
+            st.write(f"Reason: {req['reason']}")
+            st.write(f"Staff Comment: {req.get('staff_comment')}")
+            if req['file_url']: st.markdown(f"[View Doc]({req['file_url']})")
 
-    with tab1:
-        st.header("👤 My Profile")
-        st.write(f"**Name:** {st.session_state['name']}")
-        st.write(f"**Role:** {st.session_state['user_role']}")
+            comment = st.text_input("Comment", key=f"hc_{req['id']}")
+            c1, c2, c3 = st.columns(3)
+            # HOD can Approve directly OR Forward to Principal
+            if c1.button("✅ Approve", key=f"ha_{req['id']}"):
+                update_request_status(req['id'], "Approved", comment, "hod")
+            if c2.button("⏩ Fwd to Principal", key=f"hp_{req['id']}"):
+                update_request_status(req['id'], "Pending Principal", comment, "hod")
+            if c3.button("❌ Reject", key=f"hr_{req['id']}", type="primary"):
+                update_request_status(req['id'], "Rejected by HOD", comment, "hod")
 
-    with tab2:
-        st.header("📢 Publish New Circular")
-        with st.form("circular_form"):
-            title = st.text_input("📌 Title")
-            content = st.text_area("📝 Content")
-            submitted = st.form_submit_button("🚀 Publish")
-            if submitted:
-                if title and content:
-                    publish_new_circular(title, content)
-                else:
-                    st.warning("⚠️ Please fill in both title and content.")
+def principal_dashboard():
+    st.sidebar.title("🏛️ Principal Portal")
+    st.sidebar.info(f"👤 {st.session_state['name']}")
+    if st.sidebar.button("Logout"): logout_user()
 
-    with tab3:
-        st.header("✅ Pending Approvals")
-        requests = fetch_pending_requests('Pending HOD')
+    st.header("Principal Actions")
+    res = supabase.table('leave_requests').select('*').eq('status', 'Pending Principal').execute()
+    
+    if not res.data:
+        st.info("No requests pending your approval.")
         
-        if requests:
-            for req in requests:
-                with st.expander(f"📄 {req['student_name']} - {req['leave_type']} ({req['date_requested']})"):
-                    st.write(f"**✍️ Reason:** {req['reason']}")
-                    if req['file_url']:
-                        st.markdown(f"[📎 View Document]({req['file_url']})")
-                    
-                    # Comment Section
-                    hod_comment = st.text_area("💬 Add Comment (Optional)", key=f"comment_hod_{req['id']}")
+    for req in res.data:
+        with st.expander(f"{req['student_name']} (Sec {req['student_section']})"):
+            st.warning(f"Forwarded by HOD. Comment: {req.get('hod_comment')}")
+            st.write(f"Reason: {req['reason']}")
+            if req['file_url']: st.markdown(f"[View Doc]({req['file_url']})")
 
-                    col1, col2 = st.columns(2)
-                    with col1:
-                        if st.button("✅ Approve", key=f"app_{req['id']}"):
-                            update_request_status(req['id'], "Approved", hod_comment)
-                    with col2:
-                        if st.button("❌ Reject", key=f"rej_hod_{req['id']}", type="primary"):
-                            update_request_status(req['id'], "Rejected by HOD", hod_comment)
-        else:
-            st.info("✅ No requests pending approval.")
+            comment = st.text_input("Comment", key=f"pc_{req['id']}")
+            c1, c2 = st.columns(2)
+            if c1.button("✅ Grand Approval", key=f"pa_{req['id']}"):
+                update_request_status(req['id'], "Approved", comment, "principal")
+            if c2.button("❌ Reject", key=f"pr_{req['id']}", type="primary"):
+                update_request_status(req['id'], "Rejected by Principal", comment, "principal")
 
 # -----------------------------------------------------------------------------
-# Main App Structure
+# Main
 # -----------------------------------------------------------------------------
 def main():
-    st.set_page_config(page_title="Dept. Management Portal", page_icon="🎓", layout="wide")
+    st.set_page_config(page_title="College Portal", page_icon="🏫", layout="wide")
     load_custom_css()
     
     if not st.session_state['logged_in']:
-        st.title("🎓 Department Portal Login")
-        
-        col1, col2, col3 = st.columns([1, 2, 1])
-        with col2:
-            with st.form("login_form"):
-                username = st.text_input("👤 Username")
-                password = st.text_input("🔑 Password", type="password")
-                submit_button = st.form_submit_button("🚀 Login")
-                
-                if submit_button:
-                    if username and password:
-                        login_user(username, password)
-                    else:
-                        st.warning("⚠️ Please enter both username and password")
+        st.title("🏫 College Portal Login")
+        with st.form("login"):
+            u = st.text_input("Username")
+            p = st.text_input("Password", type="password")
+            if st.form_submit_button("Login"): login_user(u, p)
     else:
         role = st.session_state['user_role']
-        if role == 'student':
-            student_dashboard()
-        elif role == 'staff':
-            staff_dashboard()
-        elif role == 'hod':
-            hod_dashboard()
-        else:
-            st.error("Unknown role detected. Please contact admin.")
-            if st.button("Force Logout"):
-                logout_user()
+        if role == 'student': student_dashboard()
+        elif role == 'staff': staff_dashboard()
+        elif role == 'hod': hod_dashboard()
+        elif role == 'principal': principal_dashboard()
+        else: st.error("Invalid Role")
 
 if __name__ == "__main__":
     main()
