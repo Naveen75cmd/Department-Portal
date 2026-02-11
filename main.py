@@ -155,6 +155,74 @@ def get_user_email(username):
     except Exception:
         return None
 
+def get_all_student_emails():
+    """Fetch all student email addresses."""
+    try:
+        response = supabase.table('users').select('email').eq('role', 'student').execute()
+        return [row['email'] for row in response.data if row.get('email')]
+    except Exception as e:
+        print(f"Error fetching student emails: {e}")
+        return []
+
+def get_unread_notification_count(username):
+    """Get count of unread notifications for a user."""
+    try:
+        response = supabase.table('notifications').select('id', count='exact').eq('user_username', username).eq('is_read', False).execute()
+        return response.count if response.count else 0
+    except Exception:
+        return 0
+
+def create_notification_for_all_students(title, message):
+    """Create notification for all students."""
+    try:
+        # Get all student usernames
+        students = supabase.table('users').select('username').eq('role', 'student').execute()
+        notifications = [{
+            'user_username': student['username'],
+            'title': title,
+            'message': message,
+            'is_read': False
+        } for student in students.data]
+        
+        if notifications:
+            supabase.table('notifications').insert(notifications).execute()
+    except Exception as e:
+        print(f"Error creating notifications: {e}")
+
+def publish_circular(title, content, document_url=None):
+    """Publish a circular and notify all students."""
+    try:
+        # Insert circular
+        circular_data = {
+            'title': title,
+            'content': content,
+            'document_url': document_url
+        }
+        supabase.table('circulars').insert(circular_data).execute()
+        
+        # Create in-app notifications
+        create_notification_for_all_students(
+            f"New Circular: {title}",
+            content[:100] + "..." if len(content) > 100 else content
+        )
+        
+        # Send emails to all students
+        student_emails = get_all_student_emails()
+        email_body = f"{content}\n\n"
+        if document_url:
+            email_body += f"Document: {document_url}"
+            
+        for email in student_emails:
+            send_email_notification(
+                email,
+                f"New Circular: {title}",
+                email_body
+            )
+        
+        st.success(f"Circular published successfully! Notified {len(student_emails)} students.")
+    except Exception as e:
+        st.error(f"Error publishing circular: {e}")
+
 def submit_leave_request(username, name, section, leave_type, reason, file_url):
     try:
         data = {
@@ -229,11 +297,47 @@ def update_request_status(req_id, new_status, comment="", role_action=""):
 def student_dashboard():
     st.sidebar.title("🎓 Student Portal")
     st.sidebar.info(f"👤 {st.session_state['name']} (Section {st.session_state['section']})")
+    
+    # Notification bell
+    unread_count = get_unread_notification_count(st.session_state['username'])
+    if unread_count > 0:
+        st.sidebar.warning(f"🔔 {unread_count} unread notification(s)")
+    
     if st.sidebar.button("Logout"): logout_user()
 
-    tab1, tab2 = st.tabs(["📝 Apply Leave", "📜 History"])
+    tab1, tab2, tab3 = st.tabs(["� Circulars", "�📝 Apply Leave", "📜 History"])
     
     with tab1:
+        st.header("Latest Circulars")
+        
+        # Fetch circulars
+        circulars = supabase.table('circulars').select('*').order('date_posted', desc=True).limit(10).execute()
+        
+        if circulars.data:
+            for circular in circulars.data:
+                with st.expander(f"📌 {circular['title']} - {circular['date_posted'][:10]}"):
+                    st.write(circular['content'])
+                    if circular.get('document_url'):
+                        st.markdown(f"📎 [Download Document]({circular['document_url']})")
+        else:
+            st.info("No circulars available")
+        
+        # Show notifications
+        st.subheader("Notifications")
+        notifications = supabase.table('notifications').select('*').eq('user_username', st.session_state['username']).order('created_at', desc=True).limit(5).execute()
+        
+        if notifications.data:
+            for notif in notifications.data:
+                status = "✅" if notif['is_read'] else "🔴"
+                st.info(f"{status} **{notif['title']}** - {notif['message']}")
+                if not notif['is_read']:
+                    if st.button("Mark as read", key=f"notif_{notif['id']}"):
+                        supabase.table('notifications').update({'is_read': True}).eq('id', notif['id']).execute()
+                        st.rerun()
+        else:
+            st.info("No notifications")
+    
+    with tab2:
         st.header("New Leave Request")
         with st.form("leave_form"):
             l_type = st.selectbox("Type", ["Medical", "OD", "Casual"])
@@ -244,7 +348,7 @@ def student_dashboard():
                 submit_leave_request(st.session_state['username'], st.session_state['name'], 
                                    st.session_state['section'], l_type, reason, url)
 
-    with tab2:
+    with tab3:
         st.header("My Requests")
         res = supabase.table('leave_requests').select('*').eq('student_username', st.session_state['username']).order('date_requested', desc=True).execute()
         if res.data:
@@ -289,28 +393,57 @@ def hod_dashboard():
     st.sidebar.info(f"👤 {st.session_state['name']}")
     if st.sidebar.button("Logout"): logout_user()
 
-    col_a, col_b = st.columns(2)
-    with col_a: st.metric("Pending HOD", "View Below")
+    tab1, tab2 = st.tabs(["📢 Publish Circular", "✅ Approvals"])
     
-    st.header("Approvals")
-    # HOD sees requests pending HOD from ALL sections
-    res = supabase.table('leave_requests').select('*').eq('status', 'Pending HOD').execute()
+    with tab1:
+        st.header("Publish Circular")
+        with st.form("circular_form"):
+            title = st.text_input("Title")
+            content = st.text_area("Content")
+            doc = st.file_uploader("Attach Document (Optional)", type=['pdf','jpg','png','docx'])
+            
+            if st.form_submit_button("📤 Publish"):
+                if title and content:
+                    doc_url = None
+                    if doc:
+                        # Upload to circulars bucket (create if doesn't exist)
+                        try:
+                            timestamp = datetime.now().strftime("%Y%m%d%H%M%S")
+                            file_ext = mimetypes.guess_extension(doc.type) or ".pdf"
+                            file_name = f"circular_{timestamp}{file_ext}"
+                            file_bytes = doc.getvalue()
+                            supabase.storage.from_('circulars').upload(file_name, file_bytes, {"content-type": doc.type})
+                            doc_url = supabase.storage.from_('circulars').get_public_url(file_name)
+                        except Exception as e:
+                            st.warning(f"Document upload failed: {e}. Publishing without document.")
+                    
+                    publish_circular(title, content, doc_url)
+                else:
+                    st.error("Please provide both title and content")
     
-    for req in res.data:
-        with st.expander(f"{req['student_name']} (Sec {req['student_section']})"):
-            st.write(f"Reason: {req['reason']}")
-            st.write(f"Staff Comment: {req.get('staff_comment')}")
-            if req['file_url']: st.markdown(f"[View Doc]({req['file_url']})")
+    with tab2:
+        st.header("Leave Approvals")
+        # HOD sees requests pending HOD from ALL sections
+        res = supabase.table('leave_requests').select('*').eq('status', 'Pending HOD').execute()
+        
+        if not res.data:
+            st.info("No pending requests")
+        
+        for req in res.data:
+            with st.expander(f"{req['student_name']} (Sec {req['student_section']})"):
+                st.write(f"Reason: {req['reason']}")
+                st.write(f"Staff Comment: {req.get('staff_comment')}")
+                if req['file_url']: st.markdown(f"[View Doc]({req['file_url']})")
 
-            comment = st.text_input("Comment", key=f"hc_{req['id']}")
-            c1, c2, c3 = st.columns(3)
-            # HOD can Approve directly OR Forward to Principal
-            if c1.button("✅ Approve", key=f"ha_{req['id']}"):
-                update_request_status(req['id'], "Approved", comment, "hod")
-            if c2.button("⏩ Fwd to Principal", key=f"hp_{req['id']}"):
-                update_request_status(req['id'], "Pending Principal", comment, "hod")
-            if c3.button("❌ Reject", key=f"hr_{req['id']}", type="primary"):
-                update_request_status(req['id'], "Rejected by HOD", comment, "hod")
+                comment = st.text_input("Comment", key=f"hc_{req['id']}")
+                c1, c2, c3 = st.columns(3)
+                # HOD can Approve directly OR Forward to Principal
+                if c1.button("✅ Approve", key=f"ha_{req['id']}"):
+                    update_request_status(req['id'], "Approved", comment, "hod")
+                if c2.button("⏩ Fwd to Principal", key=f"hp_{req['id']}"):
+                    update_request_status(req['id'], "Pending Principal", comment, "hod")
+                if c3.button("❌ Reject", key=f"hr_{req['id']}", type="primary"):
+                    update_request_status(req['id'], "Rejected by HOD", comment, "hod")
 
 def principal_dashboard():
     st.sidebar.title("🏛️ Principal Portal")
