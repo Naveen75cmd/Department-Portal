@@ -53,9 +53,6 @@ def send_email_notification(to_email, subject, body):
         server = smtplib.SMTP(smtp_server, smtp_port)
         server.starttls()
         server.login(sender_email, password)
-        # In a real app, 'to_email' would be the actual student/staff email from DB.
-        # For this demo, we might be sending to dummy emails unless users have real ones.
-        # We'll just print success to avoid crashing if emails are fake.
         if "@" in to_email: 
              server.send_message(msg)
         server.quit()
