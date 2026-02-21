@@ -170,11 +170,16 @@ def submit_leave_request(username, name, section, leave_type, reason, file_url):
         
         # Email Logic: Find Staff for this section
         staff_emails = get_staff_emails(section)
+        timestamp = datetime.now().strftime("%H:%M:%S")
         for email in staff_emails:
             send_email_notification(
                 email, 
-                f"New Leave Request - {name}", 
-                f"Student {name} (Section {section}) has requested leave."
+                f"New Leave Request from {name} - [Ref: {timestamp}]", 
+                f"Hi there,\n\n"
+                f"Just a quick heads-up — {name} from Section {section} has submitted a new {leave_type} leave request.\n\n"
+                f"Reason: {reason}\n\n"
+                f"Please log in to the portal to review and take action.\n\n"
+                f"Thanks,\nDepartment Portal"
             )
             
         st.success("Leave request submitted successfully!")
@@ -198,23 +203,33 @@ def update_request_status(req_id, new_status, comment="", role_action=""):
         supabase.table('leave_requests').update(update_data).eq('id', req_id).execute()
         
         # Trigger Email
+        timestamp = datetime.now().strftime("%H:%M:%S")
         if student_username:
             student_email = get_user_email(student_username)
             if student_email:
-                subject = f"Leave Update: {new_status}"
-                body = f"Your leave request status has been updated to: {new_status}.\nComment: {comment}"
+                subject = f"Leave Update: {new_status} - [Ref: {timestamp}]"
+                comment_line = f"\nYour reviewer noted: \"{comment}\"\n" if comment else "\n"
+                body = (
+                    f"Hi {student_username},\n\n"
+                    f"We wanted to let you know that your leave request has been reviewed and the status is now: {new_status}.\n"
+                    f"{comment_line}\n"
+                    f"If you have any questions, feel free to reach out to your section coordinator.\n\n"
+                    f"Best regards,\nDepartment Portal"
+                )
                 send_email_notification(student_email, subject, body)
         
-        # New: Notify Principal if forwarded by HOD
+        # Notify Principal if forwarded by HOD
         if new_status == "Pending Principal":
-            # Assuming username 'principal' or fetching any user with role 'principal'
-            # Here we try to fetch via the known username 'principal' seeded in db
             principal_email = get_user_email('principal')
             if principal_email:
                 send_email_notification(
                     principal_email,
-                    "Action Required: Leave Request Forwarded",
-                    f"A leave request for {student_username} has been forwarded to you by HOD.\nComment: {comment}"
+                    f"Action Needed: Leave forwarded by HOD - [Ref: {timestamp}]",
+                    f"Hello Principal,\n\n"
+                    f"The HOD has forwarded a leave request from {student_username} for your review.\n"
+                    f"{('HOD\'s note: "' + comment + '"') if comment else ''}\n\n"
+                    f"Please log in to the portal to approve or reject.\n\n"
+                    f"Regards,\nDepartment Portal"
                 )
         
         st.success(f"Status updated to {new_status}")
