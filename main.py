@@ -219,6 +219,20 @@ def update_request_status(req_id, new_status, comment="", role_action=""):
                 )
                 send_email_notification(student_email, subject, body)
         
+        # Notify HOD if forwarded by Staff
+        if new_status == "Pending HOD":
+            hod_email = get_user_email('hod')
+            if hod_email:
+                send_email_notification(
+                    hod_email,
+                    f"Action Needed: Leave forwarded by Staff - [Ref: {timestamp}]",
+                    f"Hello HOD,\n\n"
+                    f"A staff member has forwarded a leave request from {student_username} for your review.\n"
+                    f"{('Staff\\'s note: \"' + comment + '\"') if comment else ''}\n\n"
+                    f"Please log in to the portal to approve, reject, or forward to the Principal.\n\n"
+                    f"Regards,\nDepartment Portal"
+                )
+
         # Notify Principal if forwarded by HOD
         if new_status == "Pending Principal":
             principal_email = get_user_email('principal')
