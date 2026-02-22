@@ -153,6 +153,14 @@ def get_user_email(username):
     except Exception:
         return None
 
+def get_role_email(role):
+    """Fetch email of a specific role."""
+    try:
+        response = supabase.table('users').select('email').eq('role', role).execute()
+        if response.data and response.data[0].get('email'):
+            return response.data[0]['email']
+        return None
+    except Exception:
         return None
 
 def submit_leave_request(username, name, section, leave_type, reason, file_url):
@@ -221,7 +229,7 @@ def update_request_status(req_id, new_status, comment="", role_action=""):
         
         # Notify HOD if forwarded by Staff
         if new_status == "Pending HOD":
-            hod_email = get_user_email('hod')
+            hod_email = get_role_email('hod')
             if hod_email:
                 comment_line = f"Staff's note: \"{comment}\"\n" if comment else ""
                 send_email_notification(
@@ -236,7 +244,7 @@ def update_request_status(req_id, new_status, comment="", role_action=""):
 
         # Notify Principal if forwarded by HOD
         if new_status == "Pending Principal":
-            principal_email = get_user_email('principal')
+            principal_email = get_role_email('principal')
             if principal_email:
                 comment_line = f"HOD's note: \"{comment}\"\n" if comment else ""
                 send_email_notification(
