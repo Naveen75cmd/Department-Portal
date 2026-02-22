@@ -6,6 +6,7 @@ import mimetypes
 import smtplib
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
+import base64
 
 # -----------------------------------------------------------------------------
 # Supabase Configuration
@@ -279,52 +280,88 @@ def staff_dashboard():
     st.sidebar.write(f"Managing: **Section {my_section}**")
     if st.sidebar.button("Logout"): logout_user()
 
-    st.header(f"Section {my_section} - Pending Requests")
+    tab1, tab2 = st.tabs(["⏳ Pending Approvals", "📜 History"])
     
-    res = supabase.table('leave_requests').select('*')\
-        .eq('status', 'Pending Staff')\
-        .eq('student_section', my_section)\
-        .execute()
+    with tab1:
+        st.header(f"Section {my_section} - Pending Requests")
         
-    for req in res.data:
-        with st.expander(f"{req['student_name']} ({req['leave_type']})"):
-            st.write(f"Reason: {req['reason']}")
-            if req['file_url']: st.markdown(f"[View Doc]({req['file_url']})")
+        res = supabase.table('leave_requests').select('*')\
+            .eq('status', 'Pending Staff')\
+            .eq('student_section', my_section)\
+            .execute()
             
-            comment = st.text_input("Comment", key=f"c_{req['id']}")
-            c1, c2 = st.columns(2)
-            if c1.button("✅ Forward to HOD", key=f"f_{req['id']}"):
-                update_request_status(req['id'], "Pending HOD", comment, "staff")
-            if c2.button("❌ Reject", key=f"r_{req['id']}", type="primary"):
-                update_request_status(req['id'], "Rejected by Staff", comment, "staff")
+        if not res.data:
+            st.info("No pending requests")
+            
+        for req in res.data:
+            with st.expander(f"{req['student_name']} ({req['leave_type']})"):
+                st.write(f"Reason: {req['reason']}")
+                if req['file_url']: st.markdown(f"[View Doc]({req['file_url']})")
+                
+                comment = st.text_input("Comment", key=f"c_{req['id']}")
+                c1, c2 = st.columns(2)
+                if c1.button("✅ Forward to HOD", key=f"f_{req['id']}"):
+                    update_request_status(req['id'], "Pending HOD", comment, "staff")
+                if c2.button("❌ Reject", key=f"r_{req['id']}", type="primary"):
+                    update_request_status(req['id'], "Rejected by Staff", comment, "staff")
+                    
+    with tab2:
+        st.header("Request History")
+        res_hist = supabase.table('leave_requests').select('*')\
+            .eq('student_section', my_section)\
+            .neq('status', 'Pending Staff')\
+            .order('date_requested', desc=True)\
+            .execute()
+            
+        if res_hist.data:
+            df = pd.DataFrame(res_hist.data)[['date_requested', 'student_name', 'leave_type', 'status', 'staff_comment']]
+            st.dataframe(df)
+        else:
+            st.info("No history found")
 
 def hod_dashboard():
     st.sidebar.title("🎓 HOD Portal")
     st.sidebar.info(f"👤 {st.session_state['name']}")
     if st.sidebar.button("Logout"): logout_user()
 
-    st.header("Leave Approvals")
-    # HOD sees requests pending HOD from ALL sections
-    res = supabase.table('leave_requests').select('*').eq('status', 'Pending HOD').execute()
+    tab1, tab2 = st.tabs(["✅ Pending Approvals", "📜 History"])
     
-    if not res.data:
-        st.info("No pending requests")
-    
-    for req in res.data:
-        with st.expander(f"{req['student_name']} (Sec {req['student_section']})"):
-            st.write(f"Reason: {req['reason']}")
-            st.write(f"Staff Comment: {req.get('staff_comment')}")
-            if req['file_url']: st.markdown(f"[View Doc]({req['file_url']})")
+    with tab1:
+        st.header("Leave Approvals")
+        # HOD sees requests pending HOD from ALL sections
+        res = supabase.table('leave_requests').select('*').eq('status', 'Pending HOD').execute()
+        
+        if not res.data:
+            st.info("No pending requests")
+        
+        for req in res.data:
+            with st.expander(f"{req['student_name']} (Sec {req['student_section']})"):
+                st.write(f"Reason: {req['reason']}")
+                st.write(f"Staff Comment: {req.get('staff_comment')}")
+                if req['file_url']: st.markdown(f"[View Doc]({req['file_url']})")
 
-            comment = st.text_input("Comment", key=f"hc_{req['id']}")
-            c1, c2, c3 = st.columns(3)
-            # HOD can Approve directly OR Forward to Principal
-            if c1.button("✅ Approve", key=f"ha_{req['id']}"):
-                update_request_status(req['id'], "Approved", comment, "hod")
-            if c2.button("⏩ Fwd to Principal", key=f"hp_{req['id']}"):
-                update_request_status(req['id'], "Pending Principal", comment, "hod")
-            if c3.button("❌ Reject", key=f"hr_{req['id']}", type="primary"):
-                update_request_status(req['id'], "Rejected by HOD", comment, "hod")
+                comment = st.text_input("Comment", key=f"hc_{req['id']}")
+                c1, c2, c3 = st.columns(3)
+                # HOD can Approve directly OR Forward to Principal
+                if c1.button("✅ Approve", key=f"ha_{req['id']}"):
+                    update_request_status(req['id'], "Approved", comment, "hod")
+                if c2.button("⏩ Fwd to Principal", key=f"hp_{req['id']}"):
+                    update_request_status(req['id'], "Pending Principal", comment, "hod")
+                if c3.button("❌ Reject", key=f"hr_{req['id']}", type="primary"):
+                    update_request_status(req['id'], "Rejected by HOD", comment, "hod")
+                    
+    with tab2:
+        st.header("Approval History")
+        res_hist = supabase.table('leave_requests').select('*')\
+            .in_('status', ['Pending Principal', 'Approved', 'Rejected by HOD', 'Rejected by Principal'])\
+            .order('date_requested', desc=True)\
+            .execute()
+        
+        if res_hist.data:
+            df = pd.DataFrame(res_hist.data)[['date_requested', 'student_name', 'student_section', 'leave_type', 'status', 'hod_comment']]
+            st.dataframe(df)
+        else:
+            st.info("No history found")
 
 def principal_dashboard():
     st.sidebar.title("🏛️ Principal Portal")
@@ -354,11 +391,25 @@ def principal_dashboard():
 # Main
 # -----------------------------------------------------------------------------
 def main():
-    st.set_page_config(page_title="College Portal", page_icon="🏫", layout="wide")
+    st.set_page_config(page_title="Leave Request Portal", page_icon="🏫", layout="wide")
     load_custom_css()
     
     if not st.session_state['logged_in']:
-        st.title("🏫 College Portal Login")
+        try:
+            with open("sugu_logo-removebg-preview.png", "rb") as f:
+                logo_b64 = base64.b64encode(f.read()).decode()
+            st.markdown(
+                f"""
+                <div style="display: flex; justify-content: center; width: 100%; margin-bottom: 20px;">
+                    <img src="data:image/png;base64,{logo_b64}" style="width: 140px; max-width: 80vw; object-fit: contain;">
+                </div>
+                """,
+                unsafe_allow_html=True
+            )
+        except Exception:
+            pass # Fall back to no logo if file is missing
+            
+        st.markdown("<h1 style='text-align: center; font-size: 2.2rem; margin-bottom: 30px;'>Suguna College of Engineering : AI&DS</h1>", unsafe_allow_html=True)
         with st.form("login"):
             u = st.text_input("Username")
             p = st.text_input("Password", type="password")
