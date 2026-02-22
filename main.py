@@ -223,12 +223,13 @@ def update_request_status(req_id, new_status, comment="", role_action=""):
         if new_status == "Pending HOD":
             hod_email = get_user_email('hod')
             if hod_email:
+                comment_line = f"Staff's note: \"{comment}\"\n" if comment else ""
                 send_email_notification(
                     hod_email,
                     f"Action Needed: Leave forwarded by Staff - [Ref: {timestamp}]",
                     f"Hello HOD,\n\n"
                     f"A staff member has forwarded a leave request from {student_username} for your review.\n"
-                    f"{('Staff\\'s note: \"' + comment + '\"') if comment else ''}\n\n"
+                    f"{comment_line}\n"
                     f"Please log in to the portal to approve, reject, or forward to the Principal.\n\n"
                     f"Regards,\nDepartment Portal"
                 )
@@ -237,12 +238,13 @@ def update_request_status(req_id, new_status, comment="", role_action=""):
         if new_status == "Pending Principal":
             principal_email = get_user_email('principal')
             if principal_email:
+                comment_line = f"HOD's note: \"{comment}\"\n" if comment else ""
                 send_email_notification(
                     principal_email,
                     f"Action Needed: Leave forwarded by HOD - [Ref: {timestamp}]",
                     f"Hello Principal,\n\n"
                     f"The HOD has forwarded a leave request from {student_username} for your review.\n"
-                    f"{('HOD\'s note: "' + comment + '"') if comment else ''}\n\n"
+                    f"{comment_line}\n"
                     f"Please log in to the portal to approve or reject.\n\n"
                     f"Regards,\nDepartment Portal"
                 )
