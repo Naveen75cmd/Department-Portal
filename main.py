@@ -179,13 +179,15 @@ def submit_leave_request(username, name, section, leave_type, reason, file_url):
         
         # Email Logic: Find Staff for this section
         staff_emails = get_staff_emails(section)
-        timestamp = datetime.now().strftime("%H:%M:%S")
+        now = datetime.now()
+        timestamp = now.strftime("%H:%M:%S")
+        date_str = now.strftime("%b %d, %Y")
         for email in staff_emails:
             send_email_notification(
                 email, 
                 f"New Leave Request from {name} - [Ref: {timestamp}]", 
                 f"Hi there,\n\n"
-                f"Just a quick heads-up — {name} from Section {section} has submitted a new {leave_type} leave request.\n\n"
+                f"Just a quick heads-up — {name} from Section {section} has submitted a new {leave_type} leave request on {date_str}.\n\n"
                 f"Reason: {reason}\n\n"
                 f"Please log in to the portal to review and take action.\n\n"
                 f"Thanks,\nDepartment Portal"
