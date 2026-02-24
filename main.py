@@ -76,81 +76,18 @@ if 'name' not in st.session_state:
 if 'section' not in st.session_state:
     st.session_state['section'] = None
 
-# Custom CSS for Glassmorphism
+# Custom CSS
 def load_custom_css():
     st.markdown("""
         <style>
-        /* Animated Gradient Background */
-        .stApp {
-            background: linear-gradient(-45deg, #1a1a2e, #16213e, #0f3460, #e94560);
-            background-size: 400% 400%;
-            animation: gradient 15s ease infinite;
-        }
-        
-        @keyframes gradient {
-            0% { background-position: 0% 50%; }
-            50% { background-position: 100% 50%; }
-            100% { background-position: 0% 50%; }
-        }
-
-        /* Glassmorphism Containers */
-        [data-testid="stForm"], 
-        [data-testid="stSidebar"] > div:first-child,
-        [data-testid="stExpander"], 
-        [data-testid="stDataFrame"],
-        [data-testid="stHeader"] {
-            background: rgba(255, 255, 255, 0.05) !important;
-            backdrop-filter: blur(12px) !important;
-            -webkit-backdrop-filter: blur(12px) !important;
-            border-radius: 15px !important;
-            border: 1px solid rgba(255, 255, 255, 0.1) !important;
-            box-shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.3) !important;
-            color: white !important;
-        }
-
-        /* Text headers mapping to white */
-        h1, h2, h3, h4, h5, h6, p, span, label, div {
-            color: white !important;
-        }
-
-        /* Input fields glassification */
-        .stTextInput input, .stTextArea textarea, .stSelectbox div[data-baseweb="select"], .stDateInput input {
-            background: rgba(255, 255, 255, 0.1) !important;
-            color: white !important;
-            border: 1px solid rgba(255, 255, 255, 0.2) !important;
-            border-radius: 8px !important;
-        }
-
-        .stTextInput input:focus, .stTextArea textarea:focus {
-            border: 1px solid #e94560 !important;
-            box-shadow: 0 0 5px rgba(233, 69, 96, 0.5) !important;
-        }
-
-        /* Buttons */
-        div.stButton > button, div.stFormSubmitButton > button { 
-            font-weight: bold !important; 
-            border-radius: 8px !important; 
-            background: rgba(255, 255, 255, 0.1) !important;
-            border: 1px solid rgba(255, 255, 255, 0.2) !important;
-            backdrop-filter: blur(4px) !important;
-            color: white !important;
-            transition: all 0.3s ease !important;
-        }
-        
-        div.stButton > button:hover, div.stFormSubmitButton > button:hover {
-            background: rgba(233, 69, 96, 0.8) !important;
-            border: 1px solid rgba(233, 69, 96, 1) !important;
-            transform: translateY(-2px) !important;
-            color: white !important;
-        }
-
-        /* Existing Badge Colors (adapted for dark mode) */
+        div.stButton > button { font-weight: bold; border-radius: 8px; }
         .stBadge { font-size: 0.8em; padding: 4px 8px; border-radius: 4px; }
-        .status-pending-staff { background-color: rgba(255, 238, 186, 0.8); color: #856404; }
-        .status-pending-hod { background-color: rgba(190, 229, 235, 0.8); color: #0c5460; }
-        .status-pending-principal { background-color: rgba(226, 227, 229, 0.8); color: #383d41; }
-        .status-approved { background-color: rgba(212, 237, 218, 0.8); color: #155724; }
-        .status-rejected { background-color: rgba(248, 215, 218, 0.8); color: #721c24; }
+        /* Badge Colors */
+        .status-pending-staff { background-color: #ffeeba; color: #856404; }
+        .status-pending-hod { background-color: #bee5eb; color: #0c5460; }
+        .status-pending-principal { background-color: #e2e3e5; color: #383d41; }
+        .status-approved { background-color: #d4edda; color: #155724; }
+        .status-rejected { background-color: #f8d7da; color: #721c24; }
         </style>
     """, unsafe_allow_html=True)
 
