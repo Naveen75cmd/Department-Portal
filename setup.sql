@@ -19,6 +19,7 @@ create table leave_requests (
   student_name text not null,
   student_section text not null,
   leave_type text not null,
+  leave_dates text,
   reason text,
   file_url text,
   status text default 'Pending Staff',

@@ -163,13 +163,14 @@ def get_role_email(role):
     except Exception:
         return None
 
-def submit_leave_request(username, name, section, leave_type, reason, file_url):
+def submit_leave_request(username, name, section, leave_type, leave_dates, reason, file_url):
     try:
         data = {
             'student_username': username,
             'student_name': name,
             'student_section': section,
             'leave_type': leave_type,
+            'leave_dates': leave_dates,
             'reason': reason,
             'file_url': file_url,
             'status': 'Pending Staff'
@@ -187,7 +188,7 @@ def submit_leave_request(username, name, section, leave_type, reason, file_url):
                 email, 
                 f"New Leave Request from {name} - [Ref: {timestamp}]", 
                 f"Hi there,\n\n"
-                f"Just a quick heads-up — {name} from Section {section} has submitted a new {leave_type} leave request on {date_str}.\n\n"
+                f"Just a quick heads-up — {name} from Section {section} has submitted a new {leave_type} leave request for {leave_dates} on {date_str}.\n\n"
                 f"Reason: {reason}\n\n"
                 f"Please log in to the portal to review and take action.\n\n"
                 f"Thanks,\nDepartment Portal"
@@ -297,18 +298,30 @@ def student_dashboard():
         st.header("New Leave Request")
         with st.form("leave_form"):
             l_type = st.selectbox("Type", ["Medical", "OD", "Casual"])
+            leave_dates_input = st.date_input("Leave Dates", [], help="Select start and end dates")
             reason = st.text_area("Reason")
             doc = st.file_uploader("Document", type=['pdf','jpg','png'])
             if st.form_submit_button("Submit"):
-                url = upload_file_to_storage(doc, st.session_state['username']) if doc else None
-                submit_leave_request(st.session_state['username'], st.session_state['name'], 
-                                   st.session_state['section'], l_type, reason, url)
+                if not leave_dates_input:
+                    st.error("Please select the leave dates.")
+                else:
+                    if isinstance(leave_dates_input, (tuple, list)):
+                        if len(leave_dates_input) == 2:
+                            dates_str = f"{leave_dates_input[0].strftime('%b %d, %Y')} to {leave_dates_input[1].strftime('%b %d, %Y')}"
+                        else:
+                            dates_str = leave_dates_input[0].strftime('%b %d, %Y')
+                    else:
+                        dates_str = leave_dates_input.strftime('%b %d, %Y')
+                        
+                    url = upload_file_to_storage(doc, st.session_state['username']) if doc else None
+                    submit_leave_request(st.session_state['username'], st.session_state['name'], 
+                                       st.session_state['section'], l_type, dates_str, reason, url)
 
     with tab2:
         st.header("My Requests")
         res = supabase.table('leave_requests').select('*').eq('student_username', st.session_state['username']).order('date_requested', desc=True).execute()
         if res.data:
-            st.dataframe(pd.DataFrame(res.data)[['date_requested','leave_type','status','staff_comment','hod_comment','principal_comment']])
+            st.dataframe(pd.DataFrame(res.data)[['date_requested', 'leave_dates', 'leave_type', 'status', 'staff_comment', 'hod_comment', 'principal_comment']])
         else:
             st.info("No requests found")
 
@@ -339,7 +352,7 @@ def staff_dashboard():
             st.info("No pending requests")
             
         for req in res.data:
-            with st.expander(f"{req['student_name']} ({req['leave_type']})"):
+            with st.expander(f"{req['student_name']} ({req['leave_type']} - {req.get('leave_dates', 'N/A')})"):
                 st.write(f"Reason: {req['reason']}")
                 if req['file_url']: st.markdown(f"[View Doc]({req['file_url']})")
                 
@@ -359,7 +372,7 @@ def staff_dashboard():
             .execute()
             
         if res_hist.data:
-            df = pd.DataFrame(res_hist.data)[['date_requested', 'student_name', 'leave_type', 'status', 'staff_comment']]
+            df = pd.DataFrame(res_hist.data)[['date_requested', 'leave_dates', 'student_name', 'leave_type', 'status', 'staff_comment']]
             st.dataframe(df)
         else:
             st.info("No history found")
@@ -380,7 +393,7 @@ def hod_dashboard():
             st.info("No pending requests")
         
         for req in res.data:
-            with st.expander(f"{req['student_name']} (Sec {req['student_section']})"):
+            with st.expander(f"{req['student_name']} (Sec {req['student_section']} | {req['leave_type']} - {req.get('leave_dates', 'N/A')})"):
                 st.write(f"Reason: {req['reason']}")
                 st.write(f"Staff Comment: {req.get('staff_comment')}")
                 if req['file_url']: st.markdown(f"[View Doc]({req['file_url']})")
@@ -403,7 +416,7 @@ def hod_dashboard():
             .execute()
         
         if res_hist.data:
-            df = pd.DataFrame(res_hist.data)[['date_requested', 'student_name', 'student_section', 'leave_type', 'status', 'hod_comment']]
+            df = pd.DataFrame(res_hist.data)[['date_requested', 'leave_dates', 'student_name', 'student_section', 'leave_type', 'status', 'hod_comment']]
             st.dataframe(df)
         else:
             st.info("No history found")
@@ -420,7 +433,7 @@ def principal_dashboard():
         st.info("No requests pending your approval.")
         
     for req in res.data:
-        with st.expander(f"{req['student_name']} (Sec {req['student_section']})"):
+        with st.expander(f"{req['student_name']} (Sec {req['student_section']} | {req['leave_type']} - {req.get('leave_dates', 'N/A')})"):
             st.warning(f"Forwarded by HOD. Comment: {req.get('hod_comment')}")
             st.write(f"Reason: {req['reason']}")
             if req['file_url']: st.markdown(f"[View Doc]({req['file_url']})")
