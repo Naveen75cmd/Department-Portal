@@ -205,9 +205,27 @@ def update_request_status(req_id, new_status, comment="", role_action=""):
         elif role_action == "principal":
             update_data['principal_comment'] = comment
             
-        # Get the request details to find the student
-        req_res = supabase.table('leave_requests').select('student_username').eq('id', req_id).execute()
-        student_username = req_res.data[0]['student_username'] if req_res.data else None
+        # Get the request details to find the student and format the email
+        req_res = supabase.table('leave_requests').select('student_username, student_name, date_requested').eq('id', req_id).execute()
+        if req_res.data:
+            student_username = req_res.data[0]['student_username']
+            student_name = req_res.data[0]['student_name']
+            
+            # Format the date nicely if it exists
+            raw_date = req_res.data[0].get('date_requested')
+            if raw_date:
+                # Assuming raw_date is a string from postgres timestamp like '2023-10-27T10:00:00+00:00'
+                try:
+                    dt = datetime.fromisoformat(raw_date.replace('Z', '+00:00'))
+                    date_str = dt.strftime("%b %d, %Y")
+                except ValueError:
+                    date_str = str(raw_date)[:10] # Fallback to just the date part yyyy-mm-dd
+            else:
+                date_str = "Unknown Date"
+        else:
+            student_username = None
+            student_name = "Unknown Student"
+            date_str = "Unknown Date"
             
         supabase.table('leave_requests').update(update_data).eq('id', req_id).execute()
         
@@ -219,8 +237,9 @@ def update_request_status(req_id, new_status, comment="", role_action=""):
                 subject = f"Leave Update: {new_status} - [Ref: {timestamp}]"
                 comment_line = f"\nYour reviewer noted: \"{comment}\"\n" if comment else "\n"
                 body = (
-                    f"Hi {student_username},\n\n"
-                    f"We wanted to let you know that your leave request has been reviewed and the status is now: {new_status}.\n"
+                    f"Hi {student_name},\n\n"
+                    f"We wanted to let you know that your leave request (submitted on {date_str}) "
+                    f"has been reviewed and the status is now: {new_status}.\n"
                     f"{comment_line}\n"
                     f"If you have any questions, feel free to reach out to your section coordinator.\n\n"
                     f"Best regards,\nDepartment Portal"
@@ -236,7 +255,7 @@ def update_request_status(req_id, new_status, comment="", role_action=""):
                     hod_email,
                     f"Action Needed: Leave forwarded by Staff - [Ref: {timestamp}]",
                     f"Hello HOD,\n\n"
-                    f"A staff member has forwarded a leave request from {student_username} for your review.\n"
+                    f"A staff member has forwarded a leave request from {student_name} (submitted on {date_str}) for your review.\n"
                     f"{comment_line}\n"
                     f"Please log in to the portal to approve, reject, or forward to the Principal.\n\n"
                     f"Regards,\nDepartment Portal"
@@ -251,7 +270,7 @@ def update_request_status(req_id, new_status, comment="", role_action=""):
                     principal_email,
                     f"Action Needed: Leave forwarded by HOD - [Ref: {timestamp}]",
                     f"Hello Principal,\n\n"
-                    f"The HOD has forwarded a leave request from {student_username} for your review.\n"
+                    f"The HOD has forwarded a leave request from {student_name} (submitted on {date_str}) for your review.\n"
                     f"{comment_line}\n"
                     f"Please log in to the portal to approve or reject.\n\n"
                     f"Regards,\nDepartment Portal"
