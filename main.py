@@ -373,7 +373,7 @@ def staff_dashboard():
             
         if res_hist.data:
             df = pd.DataFrame(res_hist.data)[['date_requested', 'leave_dates', 'student_name', 'leave_type', 'status', 'staff_comment']]
-            st.dataframe(df)
+            st.dataframe(df, column_config={"leave_dates": st.column_config.TextColumn("Leave Dates", width="large")})
         else:
             st.info("No history found")
 
@@ -417,7 +417,7 @@ def hod_dashboard():
         
         if res_hist.data:
             df = pd.DataFrame(res_hist.data)[['date_requested', 'leave_dates', 'student_name', 'student_section', 'leave_type', 'status', 'staff_comment', 'hod_comment']]
-            st.dataframe(df)
+            st.dataframe(df, column_config={"leave_dates": st.column_config.TextColumn("Leave Dates", width="large")})
         else:
             st.info("No history found")
 
