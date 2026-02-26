@@ -453,17 +453,27 @@ def admin_dashboard():
     st.header("📊 Leave Request Overview")
     
     # Filters
-    col1, col2, col3 = st.columns(3)
+    col1, col2, col3, col4 = st.columns(4)
     with col1:
         section_filter = st.selectbox("Section", ["All", "A", "B"])
     with col2:
-        start_date = st.date_input("From Date", value=None)
+        status_filter = st.selectbox("Status", ["All", "Approved", "Rejected"])
     with col3:
+        start_date = st.date_input("From Date", value=None)
+    with col4:
         end_date = st.date_input("To Date", value=None)
+    
+    # Build status list based on filter
+    if status_filter == "Approved":
+        status_list = ['Approved']
+    elif status_filter == "Rejected":
+        status_list = ['Rejected by Staff', 'Rejected by HOD', 'Rejected by Principal']
+    else:
+        status_list = ['Approved', 'Rejected by Staff', 'Rejected by HOD', 'Rejected by Principal']
     
     # Query all processed requests
     query = supabase.table('leave_requests').select('*')\
-        .in_('status', ['Approved', 'Rejected by Staff', 'Rejected by HOD', 'Rejected by Principal'])\
+        .in_('status', status_list)\
         .order('date_requested', desc=True)
     
     if section_filter != "All":
