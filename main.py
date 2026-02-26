@@ -445,6 +445,69 @@ def principal_dashboard():
             if c2.button("❌ Reject", key=f"pr_{req['id']}", type="primary"):
                 update_request_status(req['id'], "Rejected by Principal", comment, "principal")
 
+def admin_dashboard():
+    st.sidebar.title("🔐 Admin Portal")
+    st.sidebar.info(f"👤 {st.session_state['name']}")
+    if st.sidebar.button("Logout"): logout_user()
+
+    st.header("📊 Leave Request Overview")
+    
+    # Filters
+    col1, col2, col3 = st.columns(3)
+    with col1:
+        section_filter = st.selectbox("Section", ["All", "A", "B"])
+    with col2:
+        start_date = st.date_input("From Date", value=None)
+    with col3:
+        end_date = st.date_input("To Date", value=None)
+    
+    # Query all processed requests
+    query = supabase.table('leave_requests').select('*')\
+        .in_('status', ['Approved', 'Rejected by Staff', 'Rejected by HOD', 'Rejected by Principal'])\
+        .order('date_requested', desc=True)
+    
+    if section_filter != "All":
+        query = query.eq('student_section', section_filter)
+    
+    res = query.execute()
+    
+    if res.data:
+        df = pd.DataFrame(res.data)
+        
+        # Apply date filters on the DataFrame
+        if start_date:
+            df['date_requested'] = pd.to_datetime(df['date_requested'])
+            df = df[df['date_requested'].dt.date >= start_date]
+        if end_date:
+            df['date_requested'] = pd.to_datetime(df['date_requested'])
+            df = df[df['date_requested'].dt.date <= end_date]
+        
+        if df.empty:
+            st.info("No records found for the selected filters.")
+        else:
+            # Summary metrics
+            m1, m2, m3 = st.columns(3)
+            approved_count = len(df[df['status'] == 'Approved'])
+            rejected_count = len(df[df['status'].str.startswith('Rejected')])
+            m1.metric("✅ Total Approved", approved_count)
+            m2.metric("❌ Total Rejected", rejected_count)
+            m3.metric("📄 Total Records", len(df))
+            
+            st.divider()
+            
+            display_cols = ['date_requested', 'leave_dates', 'student_name', 'student_section', 'leave_type', 'status', 'reason', 'staff_comment', 'hod_comment', 'principal_comment']
+            existing_cols = [c for c in display_cols if c in df.columns]
+            st.dataframe(
+                df[existing_cols],
+                column_config={
+                    "leave_dates": st.column_config.TextColumn("Leave Dates", width="large"),
+                    "reason": st.column_config.TextColumn("Reason", width="large"),
+                },
+                use_container_width=True
+            )
+    else:
+        st.info("No processed leave requests found.")
+
 # -----------------------------------------------------------------------------
 # Main
 # -----------------------------------------------------------------------------
@@ -478,6 +541,7 @@ def main():
         elif role == 'staff': staff_dashboard()
         elif role == 'hod': hod_dashboard()
         elif role == 'principal': principal_dashboard()
+        elif role == 'admin': admin_dashboard()
         else: st.error("Invalid Role")
 
 if __name__ == "__main__":

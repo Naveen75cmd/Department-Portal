@@ -6,7 +6,7 @@ drop table if exists users;
 create table users (
   username text primary key,
   password text not null,
-  role text not null check (role in ('student', 'staff', 'hod', 'principal')),
+  role text not null check (role in ('student', 'staff', 'hod', 'principal', 'admin')),
   name text not null,
   section text check (section in ('A', 'B')), -- Only relevant for students
   email text -- Added email column
@@ -39,12 +39,13 @@ create policy "Public Access Requests" on leave_requests for all using (true) wi
 
 -- 6. Seeding Data
 
--- Seed Staff, HOD, Principal
+-- Seed Staff, HOD, Principal, Admin
 insert into users (username, password, role, name, section, email) values
 ('staff_a', 'staff123', 'staff', 'Staff Member (Section A)', 'A', 'staff_a@college.edu'),
 ('staff_b', 'staff123', 'staff', 'Staff Member (Section B)', 'B', 'staff_b@college.edu'),
 ('hod', 'hod123', 'hod', 'Head of Department', null, 'hod@college.edu'),
-('principal', 'principal123', 'principal', 'Principal', null, 'principal@college.edu');
+('principal', 'principal123', 'principal', 'Principal', null, 'principal@college.edu'),
+('admin', 'admin123', 'admin', 'Administrator', null, 'admin@college.edu');
 
 -- Seed Students using a loop (Postgres specific)
 do $$
