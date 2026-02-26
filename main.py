@@ -416,7 +416,7 @@ def hod_dashboard():
             .execute()
         
         if res_hist.data:
-            df = pd.DataFrame(res_hist.data)[['date_requested', 'leave_dates', 'student_name', 'student_section', 'leave_type', 'status', 'hod_comment']]
+            df = pd.DataFrame(res_hist.data)[['date_requested', 'leave_dates', 'student_name', 'student_section', 'leave_type', 'status', 'staff_comment', 'hod_comment']]
             st.dataframe(df)
         else:
             st.info("No history found")
